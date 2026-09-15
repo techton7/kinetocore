@@ -1,0 +1,14 @@
+[package]
+name = "kinetocore"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/techton7/kinetocore"
+authors = ["Techton <contact@techton.io>"]
+description = "Pure Rust, framework-agnostic physics and multi-track timeline motion engine."
+readme = "README.md"
+keywords = ["animation", "motion", "physics", "timeline", "spring"]
+categories = ["gui", "visualization", "multimedia", "mathematics"]
+
+[dependencies]
+easer = "0.3.0"

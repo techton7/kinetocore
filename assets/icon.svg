@@ -1,0 +1,66 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="100%" height="100%">
+  <style>
+    /* 기본 (Light 모드): 깊은 블랙/차콜 */
+    .kc-node {
+      fill: #111827;
+      transition: fill 0.25s ease;
+    }
+    /* Dark 모드: 선명한 순백색 */
+    @media (prefers-color-scheme: dark) {
+      .kc-node {
+        fill: #FFFFFF;
+      }
+    }
+  </style>
+
+  <defs>
+    <!-- 
+      앞선 원의 외부원 전체 크기(r=100)로 클리핑
+      - maskUnits="userSpaceOnUse"로 상하좌우 사각 잘림 버그 완벽 차단
+      - 뒷 원이 앞 원 밑으로 비쳐 보이지 않도록 깔끔하게 분리
+    -->
+    <mask id="kc-clip-3" maskUnits="userSpaceOnUse" maskContentUnits="userSpaceOnUse" x="0" y="0" width="512" height="512">
+      <rect x="0" y="0" width="512" height="512" fill="white" />
+      <circle cx="385" cy="211" r="100" fill="black" />
+    </mask>
+
+    <mask id="kc-clip-2" maskUnits="userSpaceOnUse" maskContentUnits="userSpaceOnUse" x="0" y="0" width="512" height="512">
+      <rect x="0" y="0" width="512" height="512" fill="white" />
+      <circle cx="299" cy="241" r="100" fill="black" />
+    </mask>
+
+    <mask id="kc-clip-1" maskUnits="userSpaceOnUse" maskContentUnits="userSpaceOnUse" x="0" y="0" width="512" height="512">
+      <rect x="0" y="0" width="512" height="512" fill="white" />
+      <circle cx="213" cy="271" r="100" fill="black" />
+    </mask>
+  </defs>
+
+  <!-- 
+    ================================================================
+    KINETO-CORE 4-FRAME TWEEN (Monochrome Adaptive Engine)
+    - 1번(From): 25% Opacity (가장 옅은 출발 잔상)
+    - 2번:       50% Opacity (가속 보간)
+    - 3번:       75% Opacity (감속 진입)
+    - 4번(To):  100% Solid   (최종 완결 노드)
+    ================================================================
+  -->
+  <g stroke="none">
+    <!-- [FRAME 1] Start Trail (25% Opacity) -->
+    <circle class="kc-node" cx="127" cy="301" r="100" 
+            opacity="0.25" 
+            mask="url(#kc-clip-1)" />
+
+    <!-- [FRAME 2] Acceleration (50% Opacity) -->
+    <circle class="kc-node" cx="213" cy="271" r="100" 
+            opacity="0.50" 
+            mask="url(#kc-clip-2)" />
+
+    <!-- [FRAME 3] Deceleration (75% Opacity) -->
+    <circle class="kc-node" cx="299" cy="241" r="100" 
+            opacity="0.75" 
+            mask="url(#kc-clip-3)" />
+
+    <!-- [FRAME 4] Final Target (100% Solid) -->
+    <circle class="kc-node" cx="385" cy="211" r="100" />
+  </g>
+</svg>
