@@ -5,7 +5,7 @@
 <h1 align="center">kinetocore</h1>
 
 <p align="center">
-  <strong>Pure Rust, framework-agnostic physics and multi-track timeline motion engine.</strong>
+  <strong>Pure Rust, framework-agnostic value-first tweening and motion core.</strong>
 </p>
 
 <p align="center">
@@ -16,9 +16,9 @@
 
 ---
 
-**Kinetocore** is a high-performance, headless motion and multi-track timeline orchestration engine written in 100% pure Rust.
+**Kinetocore** is a high-performance, headless motion core written in 100% pure Rust.
 
-Designed with **zero UI or windowing dependencies**, `kinetocore` provides nanosecond-precision numerical interpolation, velocity-based spring physics, and time-scrubbable sequencers. It serves as the foundational mathematical engine behind [**Kinetoxus**](https://github.com/techton7/kinetoxus) and can be embedded in any Rust application (WGPU, Bevy, Slint, egui, or headless simulation).
+Designed with **zero UI or windowing dependencies**, `kinetocore` currently provides a deterministic value-first tweening foundation: interpolation contracts, easing curves, playback clocks, repeat/yoyo behavior, and pure-value `set` / `from_to` tween evaluation. It serves as the foundational mathematical engine behind [**Kinetoxus**](https://github.com/techton7/kinetoxus) and is intended to remain reusable across Dioxus, graphics runtimes, and other non-UI hosts.
 
 ## 🧬 Biological Etymology
 
@@ -32,21 +32,26 @@ Named after the **Kinetochore**, the cellular protein disc that attaches chromos
 - Completely decoupled from any rendering framework or GUI event loop.
 - 100% deterministically testable in unit tests without window handles, display servers, or mocks.
 
-### 2. Dual Mathematics Engine
-- **Robert Penner Easing Formulas** (via [`easer`]): Time-tested mathematical curves (Quadratic, Cubic, Exponential, Elastic, Bounce).
-- **Damped Harmonic Oscillator** (Spring Physics): Velocity-based spring mechanics ($F = -kx - cv$) supporting real-time user gesture interrupts, velocity inheritance, and bounce settling.
+### 2. Value-First Motion Core
+- **`Interpolate`**: Atomic linear interpolation contract for value types.
+- **`Ease`**: Unified enum wrapping Robert Penner easing formulas via [`easer`].
+- **`AnimClock`**: Headless playback timekeeper with repeat and mirrored/yoyo arithmetic.
+- **`Tween<T>`**: Pure-value tweening supporting deterministic `set` and `from_to`.
 
-### 3. Multi-Track Timeline & First-Class Scrubbing
-- Multi-track time sequencer with keyframes, delays, staggers, and callbacks (`on_update`, `on_complete`).
-- `.seek(seconds: f64)`: Instant jump to any timestamp.
-- `.progress(ratio: f64)`: Scrub from 0.0 to 1.0 (ideal for sliders, scrollbars, or video players).
-- `.reverse()`, `.time_scale(rate: f64)`: Smooth playback reversal and speed scaling.
-
-### 4. Target-Agnostic Numeric Interpolation
+### 3. Target-Agnostic Numeric Interpolation
 Interpolates any data type implementing the interpolation contract:
 - Scalars: `f32`, `f64`
-- Arrays & Vectors: `[f32; N]`, `Vec2`, `Vec3`, `Vec4`
-- Direct WGPU Buffers: Write directly into GPU uniform and instance buffers (`queue.write_buffer`) with zero VDOM overhead.
+- Fixed arrays: `[f32; 2]`, `[f32; 3]`, `[f32; 4]`
+
+### 4. Planned Later Layers
+The following are intentionally **not** part of the current phase-1 surface yet:
+
+- `to` / `from` verbs requiring current-value sampling
+- target/lens abstractions for in-place host mutation
+- multi-track timelines and sequencing
+- spring physics
+- overwrite/conflict policy
+- higher-level callback orchestration
 
 ---
 
@@ -55,17 +60,17 @@ Interpolates any data type implementing the interpolation contract:
 ```text
 ┌─────────────────────────────────────────────────────────────┐
 │ kinetocore (Universal Core - Zero UI Dependency)            │
-│ - Robert Penner Easing & Damped Harmonic Oscillator         │
-│ - Multi-Track Timeline Sequencer (seek, progress, reverse)  │
-│ - Target-Agnostic [f32; N] & Scalar Interpolation           │
+│ - Interpolate / Ease / AnimClock / Tween                    │
+│ - Deterministic set + from_to evaluation                    │
+│ - Headless value-first motion foundation                    │
 └──────────────────────────────┬──────────────────────────────┘
                                │
          ┌─────────────────────┼─────────────────────┐
          ▼                     ▼                     ▼
 [ kinetoxus (Dioxus) ]   [ trioxus (WGPU) ]   [ nodoxus (Graph) ]
-- use_timeline() hooks   - 3D camera orbits   - Layout sliding
-- Signal synchronization - Shader uniforms    - Edge pulse flows
-- RSX CSS style bindings - Direct GPU buffers - FitView gliding
+- SignalTarget adapters   - Camera/handle motion - Layout sliding
+- Dioxus motion hooks     - Buffer-facing motion - Edge pulse flows
+- UI-facing ergonomics    - Non-signal targets   - FitView gliding
 ```
 
 ---
@@ -76,20 +81,24 @@ Interpolates any data type implementing the interpolation contract:
 use std::time::Duration;
 use kinetocore::prelude::*;
 
-// 1. Create a scrubbable multi-track timeline
-let mut timeline = Timeline::new();
+// 1. Create a deterministic tween from A to B
+let mut tween = Tween::from_to(
+    [0.0f32, 0.0, 10.0],
+    [15.0f32, 5.0, 25.0],
+    Duration::from_secs_f32(2.0),
+)
+.ease(Ease::CubicOut)
+.repeat(2)
+.yoyo(true);
 
-// 2. Schedule tracks
-let mut camera_pos = [0.0f32, 0.0, 10.0];
-timeline.track(&mut camera_pos)
-    .to([15.0, 5.0, 25.0], Duration::from_secs_f32(2.0))
-    .ease(Ease::CubicOut);
+// 2. Advance time
+let (value, state) = tween.step(Duration::from_millis(16));
 
-// 3. Advance time (e.g. inside a 120fps render loop)
-timeline.tick(Duration::from_millis(16));
+// 3. Scrub directly if needed
+let halfway = tween.seek(Duration::from_secs(1));
 
-// 4. Or scrub directly to 50% progress
-timeline.progress(0.5);
+assert_eq!(halfway.len(), 3);
+println!("{value:?} / {state:?}");
 ```
 
 ---
@@ -97,9 +106,10 @@ timeline.progress(0.5);
 ## 🗺️ Development Milestones
 
 - [x] **Project Initialization**: Repository scaffold, dual MIT/Apache-2.0 licenses, Release-plz CI setup.
-- [ ] **M1 (Math & Interpolation Core)**: Penner easing integration, numeric interpolation trait, and spring physics models.
-- [ ] **M2 (Tween & Timeline Engine)**: Multi-track sequencer, keyframe scheduler, `play()`, `reverse()`, and `seek()` controls.
-- [ ] **M3 (Zero-Copy Buffer Adapter)**: Direct slice writing helpers for WGPU buffers.
+- [x] **M1 (Value Core Foundation)**: `Interpolate`, `Ease`, `AnimClock`, repeat/yoyo arithmetic, and deterministic `set` / `from_to`.
+- [ ] **M2 (Target-Aware Tween Expansion)**: `to`, `from`, lazy init/current-value sampling, and target/lens abstraction.
+- [ ] **M3 (Timeline & Sequence Engine)**: Multi-track sequencing, orchestration, and richer playback control.
+- [ ] **M4 (Spring & Higher-Level Motion)**: Spring physics, overwrite policy, and broader motion semantics.
 
 ---
 

@@ -11,20 +11,35 @@
 //! - **Dioxus Ecosystem**: Serves as the foundational mathematical engine behind `kinetoxus`.
 //! - **Universal Rust Applications**: Usable in Bevy, Slint, egui, or headless rendering pipelines.
 //!
-//! ### Core Features
+//! ### Core Pillars
 //!
-//! - **Dual Mathematics Engine**:
-//!   - Industry-standard **Robert Penner Easing** functions via [`easer`].
-//!   - Velocity-based **Damped Harmonic Oscillator** (Spring Physics) for natural, interruptible motion.
-//! - **Multi-Track Timeline**: First-class scrubbing (`seek`, `progress`, `reverse`, `time_scale`).
-//! - **Target-Agnostic Interpolation**: Interpolates any numeric type (`f32`, `f64`, `[f32; N]`, vectors).
+//! - **[`Interpolate`]**: Atomic value-level linear interpolation for scalars and arrays.
+//! - **[`Ease`]**: Unified enum wrapping Robert Penner easing formulas via [`easer`].
+//! - **[`AnimClock`]**: Timekeeping, repeat cycles, and yoyo/mirrored arithmetic.
+//! - **[`Tween`]**: Pure-value tweening supporting `set` and `from_to`.
 
 #![warn(missing_docs)]
 
-/// Re-export easing functions from easer.
+pub mod clock;
+pub mod direction;
+pub mod ease;
+pub mod interpolate;
+pub mod prelude;
+pub mod repeat;
+pub mod tween;
+
+// Re-export prelude at root level
+pub use clock::{AnimClock, ClockState};
+pub use direction::PlaybackDirection;
+pub use ease::Ease;
+pub use interpolate::{lerp, Interpolate};
+pub use repeat::{RepeatCount, RepeatStrategy};
+pub use tween::Tween;
+
+/// Re-export easing functions from easer for backwards compatibility.
 pub use easer::functions as easing;
 
-/// Early scaffold version of kinetocore.
+/// Current package version of kinetocore.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 #[cfg(test)]
@@ -41,5 +56,14 @@ mod tests {
         use easer::functions::Easing;
         let v = easing::Quad::ease_in_out(0.5f32, 0.0, 100.0, 1.0);
         assert!((v - 50.0).abs() < 1e-4);
+    }
+
+    #[test]
+    fn test_root_reexports() {
+        let mut tween = Tween::from_to(0.0f32, 10.0f32, std::time::Duration::from_secs(1))
+            .ease(Ease::QuadInOut);
+        let (val, state) = tween.step(std::time::Duration::from_millis(500));
+        assert!((val - 5.0).abs() < 1e-4);
+        assert_eq!(state, ClockState::Active);
     }
 }
