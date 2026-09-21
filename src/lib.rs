@@ -26,6 +26,8 @@ pub mod ease;
 pub mod interpolate;
 pub mod prelude;
 pub mod repeat;
+pub mod state;
+pub mod target;
 pub mod tween;
 
 // Re-export prelude at root level
@@ -34,6 +36,8 @@ pub use direction::PlaybackDirection;
 pub use ease::Ease;
 pub use interpolate::{lerp, Interpolate};
 pub use repeat::{RepeatCount, RepeatStrategy};
+pub use state::TweenEndpoints;
+pub use target::{IntoTargetSampler, Target, TargetSampler};
 pub use tween::Tween;
 
 /// Re-export easing functions from easer for backwards compatibility.

@@ -7,12 +7,16 @@ use crate::direction::PlaybackDirection;
 use crate::ease::Ease;
 use crate::interpolate::Interpolate;
 use crate::repeat::{RepeatCount, RepeatStrategy};
+use crate::state::TweenEndpoints;
+use crate::target::IntoTargetSampler;
 
 /// A pure-value tween animating between two points of type `T`.
+///
+/// Can be constructed eagerly via [`Tween::from_to`] or lazily via target-aware
+/// [`Tween::to`] and [`Tween::from`], where endpoint values are sampled on demand.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Tween<T: Interpolate> {
-    from: T,
-    to: T,
+    endpoints: TweenEndpoints<T>,
     ease: Ease,
     clock: AnimClock,
 }
@@ -25,8 +29,7 @@ impl<T: Interpolate> Tween<T> {
     #[inline]
     pub fn set(value: T) -> Self {
         Self {
-            from: value.clone(),
-            to: value,
+            endpoints: TweenEndpoints::eager(value.clone(), value),
             ease: Ease::Linear,
             clock: AnimClock::new(Duration::ZERO),
         }
@@ -34,15 +37,53 @@ impl<T: Interpolate> Tween<T> {
 
     /// Create a deterministic tween animating from `from` to `to` over `duration`.
     ///
-    /// This corresponds to GSAP's `fromTo()` semantics.
+    /// This corresponds to GSAP's `fromTo()` semantics, with concrete start and end points.
     #[inline]
     pub fn from_to(from: T, to: T, duration: Duration) -> Self {
         Self {
-            from,
-            to,
+            endpoints: TweenEndpoints::eager(from, to),
             ease: Ease::default(),
             clock: AnimClock::new(duration),
         }
+    }
+
+    /// Create a target-aware `to` tween animating from the target's current value to `to`.
+    ///
+    /// The starting value is lazily sampled from `target` upon the first tick or explicit initialization.
+    #[inline]
+    pub fn to(target: impl IntoTargetSampler<T>, to: T, duration: Duration) -> Self {
+        Self {
+            endpoints: TweenEndpoints::lazy_to(target.into_sampler(), to),
+            ease: Ease::default(),
+            clock: AnimClock::new(duration),
+        }
+    }
+
+    /// Create a target-aware `from` tween animating from `from` to the target's current value.
+    ///
+    /// The destination value is lazily sampled from `target` upon the first tick or explicit initialization.
+    #[inline]
+    pub fn from(target: impl IntoTargetSampler<T>, from: T, duration: Duration) -> Self {
+        Self {
+            endpoints: TweenEndpoints::lazy_from(target.into_sampler(), from),
+            ease: Ease::default(),
+            clock: AnimClock::new(duration),
+        }
+    }
+
+    /// Returns `true` if the tween's endpoints have been resolved and latched.
+    #[inline]
+    pub fn is_initialized(&self) -> bool {
+        self.endpoints.is_ready()
+    }
+
+    /// Ensures the endpoints are sampled and latched into concrete start/end values.
+    ///
+    /// If the tween was created via [`Tween::to`] or [`Tween::from`], this will sample
+    /// the target immediately and freeze the endpoints for deterministic playback.
+    #[inline]
+    pub fn ensure_initialized(&mut self) {
+        self.endpoints.resolve();
     }
 
     /// Set easing curve.
@@ -84,16 +125,22 @@ impl<T: Interpolate> Tween<T> {
         self
     }
 
-    /// Get reference to start value.
+    /// Get reference to start value, if already known or initialized.
     #[inline]
-    pub fn from_value(&self) -> &T {
-        &self.from
+    pub fn from_value(&self) -> Option<&T> {
+        self.endpoints.from_value()
     }
 
-    /// Get reference to end value.
+    /// Get reference to end value, if already known or initialized.
     #[inline]
-    pub fn to_value(&self) -> &T {
-        &self.to
+    pub fn to_value(&self) -> Option<&T> {
+        self.endpoints.to_value()
+    }
+
+    /// Get reference to the internal endpoints representation.
+    #[inline]
+    pub fn endpoints(&self) -> &TweenEndpoints<T> {
+        &self.endpoints
     }
 
     /// Get easing curve.
@@ -133,10 +180,14 @@ impl<T: Interpolate> Tween<T> {
     }
 
     /// Calculate the current value at the current clock position.
+    ///
+    /// If endpoints are pending lazy initialization, samples dynamically without
+    /// permanently latching them until [`Tween::step`] is called.
     #[inline]
     pub fn value(&self) -> T {
         let eased_ratio = self.eased_progress();
-        self.from.interpolate(&self.to, eased_ratio)
+        let (from, to) = self.endpoints.sample_current_endpoints();
+        from.interpolate(&to, eased_ratio)
     }
 
     /// Sample the tween at an arbitrary elapsed duration without mutating internal state.
@@ -144,17 +195,22 @@ impl<T: Interpolate> Tween<T> {
         let mut temp_clock = self.clock.clone();
         temp_clock.seek(time);
         let eased_ratio = self.ease.sample(temp_clock.mirrored_cycle_fraction());
-        self.from.interpolate(&self.to, eased_ratio)
+        let (from, to) = self.endpoints.sample_current_endpoints();
+        from.interpolate(&to, eased_ratio)
     }
 
     /// Advance the tween by `delta` time and return the newly interpolated value.
+    ///
+    /// Lazily resolves endpoints on the first call, latching start/end points.
     pub fn step(&mut self, delta: Duration) -> (T, ClockState) {
+        self.ensure_initialized();
         let state = self.clock.tick(delta);
         (self.value(), state)
     }
 
     /// Seek the tween to a specific elapsed duration and return the newly interpolated value.
     pub fn seek(&mut self, time: Duration) -> T {
+        self.ensure_initialized();
         self.clock.seek(time);
         self.value()
     }
@@ -169,6 +225,10 @@ impl<T: Interpolate> Tween<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cell::Cell;
+    use std::rc::Rc;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::Arc;
 
     #[test]
     fn test_tween_set_immediate() {
@@ -209,6 +269,58 @@ mod tests {
         assert_eq!(state, ClockState::Completed);
         assert_eq!(v100, 100.0);
         assert!(tween.is_completed());
+    }
+
+    #[test]
+    fn test_tween_to_lazy_init_and_latching() {
+        let target_val = Rc::new(Cell::new(10.0f32));
+        let target_clone = target_val.clone();
+
+        let mut tween = Tween::to(move || target_clone.get(), 50.0f32, Duration::from_secs(4))
+            .ease(Ease::Linear);
+
+        assert!(!tween.is_initialized());
+        assert_eq!(tween.from_value(), None);
+        assert_eq!(tween.to_value(), Some(&50.0));
+
+        // Mutate target before first step: start point should sample the updated value
+        target_val.set(20.0);
+        assert_eq!(tween.value(), 20.0); // samples current dynamic state
+
+        // First step latches the start point to 20.0
+        let (v, s) = tween.step(Duration::from_secs(2)); // 50% between 20 and 50 = 35.0
+        assert_eq!(v, 35.0);
+        assert_eq!(s, ClockState::Active);
+        assert!(tween.is_initialized());
+        assert_eq!(tween.from_value(), Some(&20.0));
+
+        // Subsequent target mutations must NOT affect latched tween
+        target_val.set(999.0);
+        let (v, _) = tween.step(Duration::from_secs(2)); // 100% -> 50.0
+        assert_eq!(v, 50.0);
+    }
+
+    #[test]
+    fn test_tween_from_lazy_init() {
+        let target_val = Arc::new(AtomicU64::new(100));
+        let target_clone = target_val.clone();
+
+        let mut tween = Tween::from(
+            move || target_clone.load(Ordering::Relaxed) as f32,
+            0.0f32,
+            Duration::from_secs(2),
+        )
+        .ease(Ease::Linear);
+
+        assert!(!tween.is_initialized());
+        assert_eq!(tween.from_value(), Some(&0.0));
+        assert_eq!(tween.to_value(), None);
+
+        // Step 1: latches destination to 100
+        let (v, _) = tween.step(Duration::from_secs(1)); // 50% -> 50.0
+        assert_eq!(v, 50.0);
+        assert!(tween.is_initialized());
+        assert_eq!(tween.to_value(), Some(&100.0));
     }
 
     #[test]
