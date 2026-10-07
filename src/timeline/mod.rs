@@ -451,7 +451,7 @@ mod tests {
         // Tracks "x", "y", "color" run concurrently
         builder
             .track::<f64>("x", |t| {
-                t.tween(
+                t.from_to(
                     0.0,
                     100.0,
                     Duration::from_secs(2),
@@ -460,7 +460,7 @@ mod tests {
                 );
             })
             .track::<f64>("y", |t| {
-                t.tween(
+                t.from_to(
                     0.0,
                     50.0,
                     Duration::from_secs(2),
@@ -470,7 +470,7 @@ mod tests {
             })
             .track::<[f32; 4]>("color", |t| {
                 t.set([1.0, 0.0, 0.0, 1.0], Position::Absolute(Duration::ZERO))
-                    .tween(
+                    .from_to(
                         [1.0, 0.0, 0.0, 1.0],
                         [0.0, 1.0, 0.0, 1.0],
                         Duration::from_secs(1),

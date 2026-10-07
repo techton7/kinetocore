@@ -334,10 +334,12 @@ impl TimelineBuilder {
         f: impl FnOnce(&mut TrackBuilder<T>),
     ) -> &mut Self {
         let name_str = name.into();
-        self.set_initial_value(name_str.clone(), initial_value);
+        self.set_initial_value(name_str.clone(), initial_value.clone());
         let mut track_builder = TrackBuilder {
             builder: self,
             track_name: name_str,
+            last_value: Some(initial_value),
+            has_clips: false,
             _marker: PhantomData,
         };
         f(&mut track_builder);
@@ -350,9 +352,19 @@ impl TimelineBuilder {
         name: impl Into<String>,
         f: impl FnOnce(&mut TrackBuilder<T>),
     ) -> &mut Self {
+        let name_str = name.into();
+        let initial_val = self.initial_values.get(&name_str).and_then(|(b, id, _)| {
+            if *id == TypeId::of::<T>() {
+                b.downcast_ref::<T>().cloned()
+            } else {
+                None
+            }
+        });
         let mut track_builder = TrackBuilder {
             builder: self,
-            track_name: name.into(),
+            track_name: name_str,
+            last_value: initial_val,
+            has_clips: false,
             _marker: PhantomData,
         };
         f(&mut track_builder);
@@ -488,24 +500,50 @@ impl TimelineBuilder {
 pub struct TrackBuilder<'a, T: Interpolate + Send + Sync + 'static> {
     builder: &'a mut TimelineBuilder,
     track_name: String,
+    last_value: Option<T>,
+    has_clips: bool,
     _marker: PhantomData<T>,
 }
 
 impl<'a, T: Interpolate + Send + Sync + 'static> TrackBuilder<'a, T> {
     /// Explicitly set an initial value for this track.
     pub fn initial_value(&mut self, value: T) -> &mut Self {
+        self.last_value = Some(value.clone());
         self.builder.set_initial_value(self.track_name.clone(), value);
         self
     }
 
     /// Add an instant `Set` clip to this track.
     pub fn set(&mut self, value: T, position: impl Into<Position>) -> &mut Self {
+        self.last_value = Some(value.clone());
+        self.has_clips = true;
         self.builder.set(self.track_name.clone(), value, position);
         self
     }
 
-    /// Add a continuous `Tween` clip to this track.
-    pub fn tween(
+    /// Add a continuous chained `Tween` clip from the current track value to `to` over `duration`.
+    pub fn tween(&mut self, to: T, duration: Duration, ease: Ease) -> &mut Self {
+        let from = self.last_value.clone().unwrap_or_else(|| to.clone());
+        self.last_value = Some(to.clone());
+        let pos = if self.has_clips {
+            Position::RecentEnd
+        } else {
+            Position::Absolute(Duration::ZERO)
+        };
+        self.has_clips = true;
+        self.builder
+            .tween(self.track_name.clone(), from, to, duration, ease, pos);
+        self
+    }
+
+    /// Alias for chained `tween`.
+    #[inline]
+    pub fn to(&mut self, to: T, duration: Duration, ease: Ease) -> &mut Self {
+        self.tween(to, duration, ease)
+    }
+
+    /// Add an explicit `from -> to` continuous `Tween` clip to this track.
+    pub fn from_to(
         &mut self,
         from: T,
         to: T,
@@ -513,14 +551,16 @@ impl<'a, T: Interpolate + Send + Sync + 'static> TrackBuilder<'a, T> {
         ease: Ease,
         position: impl Into<Position>,
     ) -> &mut Self {
+        self.last_value = Some(to.clone());
+        self.has_clips = true;
         self.builder
             .tween(self.track_name.clone(), from, to, duration, ease, position);
         self
     }
 
-    /// Alias for `tween`.
+    /// Alias for `from_to`.
     #[inline]
-    pub fn to(
+    pub fn tween_from_to(
         &mut self,
         from: T,
         to: T,
@@ -528,7 +568,7 @@ impl<'a, T: Interpolate + Send + Sync + 'static> TrackBuilder<'a, T> {
         ease: Ease,
         position: impl Into<Position>,
     ) -> &mut Self {
-        self.tween(from, to, duration, ease, position)
+        self.from_to(from, to, duration, ease, position)
     }
 
     /// Add a `Hold` clip to this track.
@@ -538,6 +578,8 @@ impl<'a, T: Interpolate + Send + Sync + 'static> TrackBuilder<'a, T> {
         duration: Duration,
         position: impl Into<Position>,
     ) -> &mut Self {
+        self.last_value = Some(value.clone());
+        self.has_clips = true;
         self.builder.hold(self.track_name.clone(), value, duration, position);
         self
     }
@@ -549,6 +591,10 @@ impl<'a, T: Interpolate + Send + Sync + 'static> TrackBuilder<'a, T> {
         duration: Duration,
         position: impl Into<Position>,
     ) -> &mut Self {
+        if let Some(last) = keyframes.last() {
+            self.last_value = Some(last.value.clone());
+        }
+        self.has_clips = true;
         self.builder
             .keyframes(self.track_name.clone(), keyframes, duration, position);
         self
@@ -561,6 +607,7 @@ impl<'a, T: Interpolate + Send + Sync + 'static> TrackBuilder<'a, T> {
         duration: Duration,
         kind: ClipKind<T>,
     ) -> &mut Self {
+        self.has_clips = true;
         self.builder
             .add_clip(self.track_name.clone(), position, duration, kind);
         self

@@ -6,14 +6,14 @@ use kinetocore::prelude::*;
 fn test_boundary_policy_f64_explicit_initial() {
     let mut builder = TimelineBuilder::new();
     builder.track_with_initial::<f64>("alpha", -10.0, |t| {
-        t.tween(
+        t.from_to(
             0.0,
             10.0,
             Duration::from_secs(1),
             Ease::Linear,
             Position::Absolute(Duration::from_secs(1)), // [1s, 2s]
         )
-        .tween(
+        .from_to(
             20.0,
             50.0,
             Duration::from_millis(1500),
@@ -97,7 +97,7 @@ fn test_boundary_policy_f64_explicit_initial() {
 fn test_boundary_policy_f64_inferred_initial() {
     let mut builder = TimelineBuilder::new();
     builder.track::<f64>("pos", |t| {
-        t.tween(
+        t.from_to(
             42.0,
             100.0,
             Duration::from_secs(1),
@@ -132,7 +132,7 @@ fn test_boundary_policy_f64_inferred_initial() {
 fn test_boundary_policy_array_vector_track() {
     let mut builder = TimelineBuilder::new();
     builder.track_with_initial::<[f32; 2]>("point", [1.0, 2.0], |t| {
-        t.tween(
+        t.from_to(
             [10.0, 20.0],
             [30.0, 40.0],
             Duration::from_secs(1),
@@ -200,7 +200,7 @@ fn test_concurrent_heterogeneous_tracks_boundary_sampling() {
     let mut builder = TimelineBuilder::new();
     builder
         .track_with_initial::<f64>("scalar", 0.0, |t| {
-            t.tween(
+            t.from_to(
                 100.0,
                 200.0,
                 Duration::from_secs(2),

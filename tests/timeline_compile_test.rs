@@ -9,7 +9,7 @@ fn test_heterogeneous_multi_track_compilation() {
     builder
         .track::<f64>("translation_x", |t| {
             t.set(0.0, Position::Absolute(Duration::ZERO))
-                .to(
+                .from_to(
                     0.0,
                     150.0,
                     Duration::from_secs(1),
@@ -21,7 +21,7 @@ fn test_heterogeneous_multi_track_compilation() {
         .add_label("x_moved", Position::RecentEnd)
         .track::<f32>("opacity", |t| {
             t.set(0.0, Position::Absolute(Duration::ZERO))
-                .to(
+                .from_to(
                     0.0,
                     1.0,
                     Duration::from_millis(800),
@@ -31,7 +31,7 @@ fn test_heterogeneous_multi_track_compilation() {
         })
         .track::<[f32; 3]>("rgb", |t| {
             t.set([1.0, 0.0, 0.0], Position::Absolute(Duration::ZERO))
-                .to(
+                .from_to(
                     [1.0, 0.0, 0.0],
                     [0.0, 1.0, 0.0],
                     Duration::from_secs(2),
