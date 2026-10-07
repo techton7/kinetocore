@@ -6,23 +6,26 @@ use std::time::Duration;
 use crate::interpolate::Interpolate;
 use crate::timeline::clip::Clip;
 use crate::timeline::error::TimelineError;
+use crate::timeline::sampler::{BoundaryPolicy, TrackSampler};
 
 /// Type-erased trait for querying compiled tracks without knowing their target generic type.
-pub trait AnyCompiledTrack: std::any::Any + Send + Sync {
-    /// Return the name of the track.
-    fn name(&self) -> &str;
-    /// Return the total duration of the track.
-    fn duration(&self) -> Duration;
+pub trait AnyCompiledTrack: TrackSampler {
     /// Return the total number of clips on the track.
     fn clip_count(&self) -> usize;
     /// Returns `true` if the clip at `idx` is spanned.
     fn is_spanned_at(&self, idx: usize) -> bool;
     /// Return the `(start_time, end_time)` interval of the clip at `idx`.
     fn clip_interval(&self, idx: usize) -> Option<(Duration, Duration)>;
-    /// Upcast this track to `&dyn Any`.
-    fn as_any(&self) -> &dyn std::any::Any;
     /// Upcast this track to `&mut dyn Any`.
     fn as_any_mut(&mut self) -> &mut dyn std::any::Any;
+    /// Clone this erased track into a heap box.
+    fn clone_box(&self) -> Box<dyn AnyCompiledTrack>;
+}
+
+impl Clone for Box<dyn AnyCompiledTrack> {
+    fn clone(&self) -> Self {
+        self.clone_box()
+    }
 }
 
 /// A strongly typed compiled track containing contiguous, sorted, non-overlapping clips.
@@ -30,6 +33,8 @@ pub trait AnyCompiledTrack: std::any::Any + Send + Sync {
 pub struct CompiledTrack<T: Interpolate> {
     /// Track identifier name.
     pub name: String,
+    /// Initial value held during pre-roll ($t < \text{first\_clip.start\_time}$).
+    pub initial_value: T,
     /// Flat, sorted sequence of clips for this track.
     pub clips: Vec<Clip<T>>,
     /// Total duration of this track (furthest clip `end_time`).
@@ -37,10 +42,11 @@ pub struct CompiledTrack<T: Interpolate> {
 }
 
 impl<T: Interpolate> CompiledTrack<T> {
-    /// Create a new compiled track from sorted clips.
-    pub fn new(name: String, clips: Vec<Clip<T>>, duration: Duration) -> Self {
+    /// Create a new compiled track from sorted clips and an initial value.
+    pub fn new(name: String, initial_value: T, clips: Vec<Clip<T>>, duration: Duration) -> Self {
         Self {
             name,
+            initial_value,
             clips,
             duration,
         }
@@ -50,6 +56,12 @@ impl<T: Interpolate> CompiledTrack<T> {
     #[inline]
     pub fn name(&self) -> &str {
         &self.name
+    }
+
+    /// Return the initial pre-roll value of this track.
+    #[inline]
+    pub fn initial_value(&self) -> &T {
+        &self.initial_value
     }
 
     /// Return the total duration of this track.
@@ -81,9 +93,106 @@ impl<T: Interpolate> CompiledTrack<T> {
     pub fn is_empty(&self) -> bool {
         self.clips.is_empty()
     }
+
+    /// Sample this track at `time` using deterministic boundary and interval policies:
+    ///
+    /// 1. **Pre-roll** ($t < t_{\text{start}}$): returns `self.initial_value`.
+    /// 2. **Active clip** ($t \in [t_{\text{start}}, t_{\text{end}}]$): evaluated per clip kind.
+    /// 3. **Inter-clip gap** ($t_{\text{prev.end}} < t < t_{\text{next.start}}$): forward-fills preceding terminal value.
+    /// 4. **Post-roll** ($t > t_{\text{end}}$): holds last clip's terminal value.
+    pub fn sample_at(&self, time: Duration) -> T {
+        if self.clips.is_empty() {
+            return self.initial_value.clone();
+        }
+
+        // 1. Pre-roll
+        if time < self.clips[0].start_time {
+            return self.initial_value.clone();
+        }
+
+        // 4. Post-roll
+        let last_clip = &self.clips[self.clips.len() - 1];
+        if time > last_clip.end_time() {
+            return last_clip.terminal_value();
+        }
+
+        // Find clips starting at or before `time`
+        let idx = self.clips.partition_point(|c| c.start_time <= time);
+        if idx == 0 {
+            return self.initial_value.clone();
+        }
+
+        let latest = &self.clips[idx - 1];
+
+        if latest.is_spanned() {
+            if time <= latest.end_time() {
+                // Active spanned clip
+                latest.sample_at(time)
+            } else {
+                // Gap between clips: forward-fill latest terminal value
+                latest.terminal_value()
+            }
+        } else {
+            // Instant clip
+            if latest.start_time == time {
+                latest.terminal_value()
+            } else {
+                // Check if an earlier spanned clip is still actively covering `time`
+                let active_spanned = self.clips[..idx]
+                    .iter()
+                    .rev()
+                    .find(|c| c.is_spanned() && time <= c.end_time());
+
+                if let Some(spanned) = active_spanned {
+                    spanned.sample_at(time)
+                } else {
+                    latest.terminal_value()
+                }
+            }
+        }
+    }
+
+    /// Query the boundary policy applying to `time`, or `None` if an active clip interval covers `time`.
+    pub fn boundary_at(&self, time: Duration) -> Option<BoundaryPolicy> {
+        if self.clips.is_empty() {
+            return Some(BoundaryPolicy::HoldInitial);
+        }
+
+        if time < self.clips[0].start_time {
+            return Some(BoundaryPolicy::HoldInitial);
+        }
+
+        let last_clip = &self.clips[self.clips.len() - 1];
+        if time > last_clip.end_time() {
+            return Some(BoundaryPolicy::HoldTerminal);
+        }
+
+        let idx = self.clips.partition_point(|c| c.start_time <= time);
+        if idx > 0 {
+            let latest = &self.clips[idx - 1];
+            if latest.is_spanned() && time <= latest.end_time() {
+                return None;
+            }
+            if latest.is_instant() && latest.start_time == time {
+                return None;
+            }
+            let active_spanned = self.clips[..idx]
+                .iter()
+                .rev()
+                .any(|c| c.is_spanned() && time <= c.end_time());
+            if active_spanned {
+                return None;
+            }
+            if idx < self.clips.len() && time < self.clips[idx].start_time {
+                return Some(BoundaryPolicy::ForwardFill);
+            }
+        }
+
+        None
+    }
 }
 
-impl<T: Interpolate + Send + Sync + 'static> AnyCompiledTrack for CompiledTrack<T> {
+impl<T: Interpolate + Send + Sync + 'static> TrackSampler for CompiledTrack<T> {
     fn name(&self) -> &str {
         &self.name
     }
@@ -92,6 +201,12 @@ impl<T: Interpolate + Send + Sync + 'static> AnyCompiledTrack for CompiledTrack<
         self.duration
     }
 
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
+
+impl<T: Interpolate + Send + Sync + 'static> AnyCompiledTrack for CompiledTrack<T> {
     fn clip_count(&self) -> usize {
         self.clips.len()
     }
@@ -104,16 +219,17 @@ impl<T: Interpolate + Send + Sync + 'static> AnyCompiledTrack for CompiledTrack<
         self.clips.get(idx).map(|c| (c.start_time, c.end_time()))
     }
 
-    fn as_any(&self) -> &dyn std::any::Any {
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
         self
     }
 
-    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
-        self
+    fn clone_box(&self) -> Box<dyn AnyCompiledTrack> {
+        Box::new(self.clone())
     }
 }
 
 /// Fully compiled, validated multi-track timeline ready for sampling and playback.
+#[derive(Clone)]
 pub struct CompiledTimeline {
     pub(crate) tracks: HashMap<String, Box<dyn AnyCompiledTrack>>,
     pub(crate) labels: HashMap<String, Duration>,
@@ -164,6 +280,12 @@ impl CompiledTimeline {
         self.tracks.get(name).map(|b| &**b)
     }
 
+    /// Query a type-erased [`TrackSampler`] by name.
+    #[inline]
+    pub fn track_sampler(&self, name: &str) -> Option<&dyn TrackSampler> {
+        self.tracks.get(name).map(|b| b.as_ref() as &dyn TrackSampler)
+    }
+
     /// Query a strongly typed track by name.
     ///
     /// # Errors
@@ -185,6 +307,19 @@ impl CompiledTimeline {
                     "track '{name}' exists but channel type does not match requested type"
                 ))
             })
+    }
+
+    /// Sample a strongly typed track by name at `time`.
+    ///
+    /// Evaluates the track at `time` using deterministic boundary and interval policies.
+    /// Returns `None` if the track name does not exist or if `T` does not match
+    /// the track's channel type.
+    ///
+    /// This method performs zero heap allocations.
+    #[inline]
+    pub fn sample_track<T: Interpolate + 'static>(&self, name: &str, time: Duration) -> Option<T> {
+        let track = self.track::<T>(name).ok()?;
+        Some(track.sample_at(time))
     }
 }
 

@@ -136,6 +136,90 @@ impl<T: Interpolate> Clip<T> {
     pub fn is_spanned(&self) -> bool {
         matches!(self.kind, ClipKind::Spanned(_))
     }
+
+    /// Return the starting value of this clip.
+    pub fn start_value(&self) -> T {
+        match &self.kind {
+            ClipKind::Instant(InstantClipKind::Set { value }) => value.clone(),
+            ClipKind::Spanned(SpannedClipKind::Tween { from, .. }) => from.clone(),
+            ClipKind::Spanned(SpannedClipKind::Hold { value }) => value.clone(),
+            ClipKind::Spanned(SpannedClipKind::Keyframes { keyframes }) => {
+                keyframes
+                    .first()
+                    .expect("keyframe sequence must contain at least one keyframe")
+                    .value
+                    .clone()
+            }
+        }
+    }
+
+    /// Return the terminal (ending) value of this clip.
+    pub fn terminal_value(&self) -> T {
+        match &self.kind {
+            ClipKind::Instant(InstantClipKind::Set { value }) => value.clone(),
+            ClipKind::Spanned(SpannedClipKind::Tween { to, .. }) => to.clone(),
+            ClipKind::Spanned(SpannedClipKind::Hold { value }) => value.clone(),
+            ClipKind::Spanned(SpannedClipKind::Keyframes { keyframes }) => {
+                keyframes
+                    .last()
+                    .expect("keyframe sequence must contain at least one keyframe")
+                    .value
+                    .clone()
+            }
+        }
+    }
+
+    /// Sample this clip at `time` within its active span.
+    pub fn sample_at(&self, time: Duration) -> T {
+        match &self.kind {
+            ClipKind::Instant(InstantClipKind::Set { value }) => value.clone(),
+            ClipKind::Spanned(SpannedClipKind::Hold { value }) => value.clone(),
+            ClipKind::Spanned(SpannedClipKind::Tween { from, to, ease }) => {
+                if self.duration.is_zero() || time <= self.start_time {
+                    return from.clone();
+                }
+                if time >= self.end_time() {
+                    return to.clone();
+                }
+                let elapsed_nanos = (time - self.start_time).as_nanos() as f64;
+                let dur_nanos = self.duration.as_nanos() as f64;
+                let tau = (elapsed_nanos / dur_nanos).clamp(0.0, 1.0) as f32;
+                let ratio = ease.sample(tau);
+                from.interpolate(to, ratio)
+            }
+            ClipKind::Spanned(SpannedClipKind::Keyframes { keyframes }) => {
+                if keyframes.is_empty() {
+                    panic!("keyframe sequence must not be empty");
+                }
+                if self.duration.is_zero() || time <= self.start_time {
+                    return keyframes[0].value.clone();
+                }
+                if time >= self.end_time() {
+                    return keyframes[keyframes.len() - 1].value.clone();
+                }
+                let elapsed_nanos = (time - self.start_time).as_nanos() as f64;
+                let dur_nanos = self.duration.as_nanos() as f64;
+                let tau = (elapsed_nanos / dur_nanos).clamp(0.0, 1.0) as f32;
+
+                for i in 0..keyframes.len() - 1 {
+                    let k_curr = &keyframes[i];
+                    let k_next = &keyframes[i + 1];
+                    if tau <= k_next.offset {
+                        let span = k_next.offset - k_curr.offset;
+                        let seg_tau = if span <= 0.0 {
+                            0.0
+                        } else {
+                            ((tau - k_curr.offset) / span).clamp(0.0, 1.0)
+                        };
+                        let ratio = k_curr.ease.sample(seg_tau);
+                        return k_curr.value.interpolate(&k_next.value, ratio);
+                    }
+                }
+
+                keyframes[keyframes.len() - 1].value.clone()
+            }
+        }
+    }
 }
 
 #[cfg(test)]

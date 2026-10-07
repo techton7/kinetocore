@@ -9,8 +9,8 @@ pub use crate::spring::{DampingRegime, Spring, SpringConfig, SpringError, Spring
 pub use crate::state::TweenEndpoints;
 pub use crate::target::{IntoTargetSampler, Target, TargetSampler};
 pub use crate::timeline::{
-    validate_keyframes, Clip, ClipKind, CompiledTimeline, CompiledTrack, InstantClipKind,
-    Keyframe, OffsetSign, Position, SignedDuration, SpannedClipKind, TimelineBuilder,
-    TimelineError, TrackBuilder,
+    validate_keyframes, BoundaryPolicy, Clip, ClipKind, CompiledTimeline, CompiledTrack,
+    InstantClipKind, Keyframe, OffsetSign, Position, SignedDuration, SpannedClipKind, Timeline,
+    TimelineBuilder, TimelineError, TimelineTransport, TrackBuilder, TrackSampler, TransportState,
 };
 pub use crate::tween::Tween;

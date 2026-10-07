@@ -76,6 +76,7 @@ impl<T: Interpolate + Send + Sync + 'static> ErasedClipAuthoring for TypedClipAu
     fn create_track_builder(&self) -> Box<dyn ErasedTrackBuilder> {
         Box::new(TypedTrackBuilder::<T> {
             name: self.track.clone(),
+            initial_value: None,
             clips: Vec::new(),
         })
     }
@@ -98,6 +99,7 @@ impl<T: Interpolate + Send + Sync + 'static> ErasedClipAuthoring for TypedClipAu
 trait ErasedTrackBuilder: Send + Sync {
     fn track_type_id(&self) -> TypeId;
     fn track_type_name(&self) -> &'static str;
+    fn set_erased_initial_value(&mut self, val_box: Box<dyn std::any::Any + Send + Sync>);
     fn add_erased_clip(&mut self, clip_box: Box<dyn std::any::Any + Send + Sync>);
     fn compile_track(
         self: Box<Self>,
@@ -107,6 +109,7 @@ trait ErasedTrackBuilder: Send + Sync {
 
 struct TypedTrackBuilder<T: Interpolate + Send + Sync + 'static> {
     name: String,
+    initial_value: Option<T>,
     clips: Vec<Clip<T>>,
 }
 
@@ -117,6 +120,12 @@ impl<T: Interpolate + Send + Sync + 'static> ErasedTrackBuilder for TypedTrackBu
 
     fn track_type_name(&self) -> &'static str {
         std::any::type_name::<T>()
+    }
+
+    fn set_erased_initial_value(&mut self, val_box: Box<dyn std::any::Any + Send + Sync>) {
+        if let Ok(val) = val_box.downcast::<T>() {
+            self.initial_value = Some(*val);
+        }
     }
 
     fn add_erased_clip(&mut self, clip_box: Box<dyn std::any::Any + Send + Sync>) {
@@ -157,7 +166,17 @@ impl<T: Interpolate + Send + Sync + 'static> ErasedTrackBuilder for TypedTrackBu
             }
         }
 
-        let compiled = CompiledTrack::new(self.name, self.clips, track_duration);
+        let initial_value = match self.initial_value {
+            Some(v) => v,
+            None => {
+                self.clips
+                    .first()
+                    .map(|c| c.start_value())
+                    .ok_or(TimelineError::EmptyTimeline)?
+            }
+        };
+
+        let compiled = CompiledTrack::new(self.name, initial_value, self.clips, track_duration);
         Ok(Box::new(compiled))
     }
 }
@@ -174,6 +193,7 @@ enum AuthoringCommand {
 #[derive(Default)]
 pub struct TimelineBuilder {
     commands: Vec<AuthoringCommand>,
+    initial_values: HashMap<String, (Box<dyn std::any::Any + Send + Sync>, TypeId, &'static str)>,
 }
 
 impl TimelineBuilder {
@@ -182,7 +202,25 @@ impl TimelineBuilder {
     pub fn new() -> Self {
         Self {
             commands: Vec::new(),
+            initial_values: HashMap::new(),
         }
+    }
+
+    /// Explicitly set an initial value for a track.
+    pub fn set_initial_value<T: Interpolate + Send + Sync + 'static>(
+        &mut self,
+        track: impl Into<String>,
+        value: T,
+    ) -> &mut Self {
+        self.initial_values.insert(
+            track.into(),
+            (
+                Box::new(value),
+                TypeId::of::<T>(),
+                std::any::type_name::<T>(),
+            ),
+        );
+        self
     }
 
     /// Add a named synchronization label at `position`.
@@ -286,6 +324,24 @@ impl TimelineBuilder {
             duration,
             ClipKind::Spanned(SpannedClipKind::Keyframes { keyframes }),
         )
+    }
+
+    /// Scope clip authoring to a specific typed track with an explicit initial value.
+    pub fn track_with_initial<T: Interpolate + Send + Sync + 'static>(
+        &mut self,
+        name: impl Into<String>,
+        initial_value: T,
+        f: impl FnOnce(&mut TrackBuilder<T>),
+    ) -> &mut Self {
+        let name_str = name.into();
+        self.set_initial_value(name_str.clone(), initial_value);
+        let mut track_builder = TrackBuilder {
+            builder: self,
+            track_name: name_str,
+            _marker: PhantomData,
+        };
+        f(&mut track_builder);
+        self
     }
 
     /// Scope clip authoring to a specific typed track.
@@ -399,6 +455,19 @@ impl TimelineBuilder {
             return Err(TimelineError::EmptyTimeline);
         }
 
+        for (track_name, (initial_box, type_id, type_name)) in self.initial_values {
+            if let Some(builder) = track_builders.get_mut(&track_name) {
+                if builder.track_type_id() != type_id {
+                    return Err(TimelineError::InvalidPosition(format!(
+                        "track '{track_name}' channel type mismatch: expected {}, found {}",
+                        builder.track_type_name(),
+                        type_name
+                    )));
+                }
+                builder.set_erased_initial_value(initial_box);
+            }
+        }
+
         let mut compiled_tracks: HashMap<String, Box<dyn AnyCompiledTrack>> = HashMap::new();
         for (name, builder) in track_builders {
             let dur = track_durations.get(&name).copied().unwrap_or(Duration::ZERO);
@@ -423,6 +492,12 @@ pub struct TrackBuilder<'a, T: Interpolate + Send + Sync + 'static> {
 }
 
 impl<'a, T: Interpolate + Send + Sync + 'static> TrackBuilder<'a, T> {
+    /// Explicitly set an initial value for this track.
+    pub fn initial_value(&mut self, value: T) -> &mut Self {
+        self.builder.set_initial_value(self.track_name.clone(), value);
+        self
+    }
+
     /// Add an instant `Set` clip to this track.
     pub fn set(&mut self, value: T, position: impl Into<Position>) -> &mut Self {
         self.builder.set(self.track_name.clone(), value, position);

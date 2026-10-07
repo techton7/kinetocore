@@ -64,6 +64,18 @@ impl AnimClock {
         self.cycle_duration
     }
 
+    /// Get configured repeat count.
+    #[inline]
+    pub fn repeat_count(&self) -> RepeatCount {
+        self.repeat_count
+    }
+
+    /// Get configured repeat strategy.
+    #[inline]
+    pub fn repeat_strategy(&self) -> RepeatStrategy {
+        self.repeat_strategy
+    }
+
     /// Get current total elapsed time.
     #[inline]
     pub fn elapsed(&self) -> Duration {

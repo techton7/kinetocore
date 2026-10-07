@@ -6,6 +6,13 @@ pub mod compiled;
 pub mod error;
 pub mod keyframe;
 pub mod position;
+pub mod sampler;
+pub mod transport;
+
+use std::time::Duration;
+
+use crate::clock::ClockState;
+use crate::interpolate::Interpolate;
 
 pub use builder::{TimelineBuilder, TrackBuilder};
 pub use clip::{Clip, ClipKind, InstantClipKind, SpannedClipKind};
@@ -13,6 +20,148 @@ pub use compiled::{AnyCompiledTrack, CompiledTimeline, CompiledTrack};
 pub use error::TimelineError;
 pub use keyframe::{validate_keyframes, Keyframe};
 pub use position::{OffsetSign, Position, SignedDuration};
+pub use sampler::{BoundaryPolicy, TrackSampler};
+pub use transport::{TimelineTransport, TransportState};
+
+/// High-level coordinator managing an active playing or seekable multi-track timeline.
+#[derive(Debug, Clone)]
+pub struct Timeline {
+    compiled: CompiledTimeline,
+    transport: TimelineTransport,
+}
+
+impl Timeline {
+    /// Create a new timeline coordinating `compiled` with an active transport playhead.
+    pub fn new(compiled: CompiledTimeline) -> Self {
+        let duration = compiled.duration();
+        Self {
+            compiled,
+            transport: TimelineTransport::new(duration),
+        }
+    }
+
+    /// Access reference to the master transport playhead.
+    #[inline]
+    pub fn transport(&self) -> &TimelineTransport {
+        &self.transport
+    }
+
+    /// Access mutable reference to the master transport playhead.
+    #[inline]
+    pub fn transport_mut(&mut self) -> &mut TimelineTransport {
+        &mut self.transport
+    }
+
+    /// Access reference to the underlying compiled timeline.
+    #[inline]
+    pub fn compiled(&self) -> &CompiledTimeline {
+        &self.compiled
+    }
+
+    /// Start or resume playback.
+    #[inline]
+    pub fn play(&mut self) {
+        self.transport.play();
+    }
+
+    /// Pause playback.
+    #[inline]
+    pub fn pause(&mut self) {
+        self.transport.pause();
+    }
+
+    /// Reverse playback direction.
+    #[inline]
+    pub fn reverse(&mut self) {
+        self.transport.reverse();
+    }
+
+    /// Restart playback from `t = 0` in forward direction.
+    #[inline]
+    pub fn restart(&mut self) {
+        self.transport.restart();
+    }
+
+    /// Seek transport to absolute timestamp `time`.
+    #[inline]
+    pub fn seek(&mut self, time: Duration) {
+        self.transport.seek(time);
+    }
+
+    /// Set transport normalized progress fraction in `[0.0, 1.0]`.
+    #[inline]
+    pub fn set_progress(&mut self, progress: f32) {
+        self.transport.set_progress(progress);
+    }
+
+    /// Set transport playback speed multiplier.
+    #[inline]
+    pub fn set_time_scale(&mut self, scale: f64) {
+        self.transport.set_time_scale(scale);
+    }
+
+    /// Advance transport by `dt`.
+    #[inline]
+    pub fn step(&mut self, dt: Duration) -> ClockState {
+        self.transport.step(dt)
+    }
+
+    /// Sample track `track_name` at the current transport playhead time.
+    ///
+    /// Returns `None` if `track_name` does not exist or channel type does not match `T`.
+    #[inline]
+    pub fn sample<T: Interpolate + 'static>(&self, track_name: &str) -> Option<T> {
+        self.sample_at(track_name, self.transport.time())
+    }
+
+    /// Statelessly sample track `track_name` at an arbitrary timestamp `time`.
+    ///
+    /// Returns `None` if `track_name` does not exist or channel type does not match `T`.
+    #[inline]
+    pub fn sample_at<T: Interpolate + 'static>(
+        &self,
+        track_name: &str,
+        time: Duration,
+    ) -> Option<T> {
+        self.compiled.sample_track(track_name, time)
+    }
+
+    /// Current transport sampling timestamp.
+    #[inline]
+    pub fn time(&self) -> Duration {
+        self.transport.time()
+    }
+
+    /// Current transport progress fraction in `[0.0, 1.0]`.
+    #[inline]
+    pub fn progress(&self) -> f32 {
+        self.transport.progress()
+    }
+
+    /// Returns `true` if timeline is actively playing.
+    #[inline]
+    pub fn is_playing(&self) -> bool {
+        self.transport.is_playing()
+    }
+
+    /// Returns `true` if timeline playback is paused.
+    #[inline]
+    pub fn is_paused(&self) -> bool {
+        self.transport.is_paused()
+    }
+
+    /// Returns `true` if timeline has completed playback.
+    #[inline]
+    pub fn is_completed(&self) -> bool {
+        self.transport.is_completed()
+    }
+
+    /// Total timeline cycle duration.
+    #[inline]
+    pub fn duration(&self) -> Duration {
+        self.compiled.duration()
+    }
+}
 
 #[cfg(test)]
 mod tests {

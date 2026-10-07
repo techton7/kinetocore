@@ -42,9 +42,9 @@ pub use spring::{DampingRegime, Spring, SpringConfig, SpringError, SpringState};
 pub use state::TweenEndpoints;
 pub use target::{IntoTargetSampler, Target, TargetSampler};
 pub use timeline::{
-    validate_keyframes, Clip, ClipKind, CompiledTimeline, CompiledTrack, InstantClipKind,
-    Keyframe, OffsetSign, Position, SignedDuration, SpannedClipKind, TimelineBuilder,
-    TimelineError, TrackBuilder,
+    validate_keyframes, BoundaryPolicy, Clip, ClipKind, CompiledTimeline, CompiledTrack,
+    InstantClipKind, Keyframe, OffsetSign, Position, SignedDuration, SpannedClipKind, Timeline,
+    TimelineBuilder, TimelineError, TimelineTransport, TrackBuilder, TrackSampler, TransportState,
 };
 pub use tween::Tween;
 
