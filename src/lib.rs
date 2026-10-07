@@ -29,6 +29,7 @@ pub mod repeat;
 pub mod spring;
 pub mod state;
 pub mod target;
+pub mod timeline;
 pub mod tween;
 
 // Re-export prelude at root level
@@ -40,6 +41,11 @@ pub use repeat::{RepeatCount, RepeatStrategy};
 pub use spring::{DampingRegime, Spring, SpringConfig, SpringError, SpringState};
 pub use state::TweenEndpoints;
 pub use target::{IntoTargetSampler, Target, TargetSampler};
+pub use timeline::{
+    validate_keyframes, Clip, ClipKind, CompiledTimeline, CompiledTrack, InstantClipKind,
+    Keyframe, OffsetSign, Position, SignedDuration, SpannedClipKind, TimelineBuilder,
+    TimelineError, TrackBuilder,
+};
 pub use tween::Tween;
 
 /// Re-export easing functions from easer for backwards compatibility.
