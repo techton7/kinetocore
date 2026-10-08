@@ -15,7 +15,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Near-critical stability boundary protection ($|\zeta - 1.0| \le 10^{-5}$) eliminating division-by-zero or numerical blowup.
 - Pure $C^1$ velocity-preserving mid-flight retargeting.
 - Settle detection (`is_settled`) and settle duration estimation.
-- Comprehensive analytical verification test suite with sampling cadence independence.
+- Multi-track timeline sequencing engine with authoring IR, Position grammar (`Absolute`, `Offset`, `RecentStart`, `RecentEnd`, `Label`), and compiler (`kinetocore::timeline`).
+- Monotonic Keyframe boundary validation and compile-time single-track overlap rejection.
+- Zero-alloc type-erased track sampling (`TrackSampler`) and deterministic boundary policies (pre-roll hold, gap forward-fill, post-roll hold).
+- Master clock transport state machine (`TimelineTransport`) with play, pause, seek, reverse, time_scale, and scrubber support.
+- Comprehensive analytical verification test suite with sampling cadence independence (100 tests).
 
 ## [0.1.1](https://github.com/techton7/kinetocore/compare/v0.1.0...v0.1.1) - 2026-09-21
 
